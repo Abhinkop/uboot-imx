@@ -125,7 +125,7 @@ static int do_scmi_info(struct cmd_tbl *cmdtp, int flag, int argc,
 	if (!base_proto)
 		return CMD_RET_FAILURE;
 
-	printf("SCMI device: %s\n", agent->name);
+	printf("SCMI device Abhin: %s\n", agent->name);
 	printf("  protocol version: 0x%x\n", scmi_version(agent));
 	printf("  # of agents: %d\n", scmi_num_agents(agent));
 	for (i = 0; i < scmi_num_agents(agent); i++) {
