@@ -404,6 +404,68 @@ static int do_scmi_list_domains(struct cmd_tbl *cmdtp, int flag, int argc, char 
 	return CMD_RET_SUCCESS;
 }
 
+#define SCMI_POWER_STATE_SET 0x4
+
+struct scmi_power_state_in {
+	u32 flags;
+	u32 domain_id;
+	u32 power_state;
+};
+
+static int do_scmi_power(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+{
+	struct udevice *dev;
+	struct scmi_msg msg;
+	struct scmi_power_state_in req;
+	s32 status_resp = -1;
+	unsigned long domain_id;
+	unsigned long state;
+	int ret;
+	char *end;
+
+	if (argc != 3)
+		return CMD_RET_USAGE;
+
+	domain_id = simple_strtoul(argv[1], &end, 16);
+	if (*end != '\0')
+		return CMD_RET_USAGE;
+
+	state = simple_strtoul(argv[2], &end, 16);
+	if (*end != '\0')
+		return CMD_RET_USAGE;
+
+	ret = uclass_get_device_by_name(UCLASS_POWER_DOMAIN, "protocol@11", &dev);
+	if (ret) {
+		printf("Error: protocol@11 not found (%d)\n", ret);
+		return CMD_RET_FAILURE;
+	}
+
+	/* Build command payload properties */
+	req.flags = 0; // Synchronous
+	req.domain_id = cpu_to_le32(domain_id);
+	req.power_state = cpu_to_le32(state); // 0 = OFF, 1 = ON
+
+	msg.protocol_id = 0x11;
+	msg.message_id = SCMI_POWER_STATE_SET;
+	msg.in_msg = (u8 *)&req;
+	msg.in_msg_sz = sizeof(req);
+	msg.out_msg = (u8 *)&status_resp;
+	msg.out_msg_sz = sizeof(status_resp);
+
+	printf("Sending SCMI Power Command: Domain %lu -> State %lu...\n", domain_id, state);
+		
+	/* Process the message context through devm */
+	ret = devm_scmi_process_msg(dev, &msg);
+
+	if (ret != 0 || status_resp != 0) {
+		printf("SCMI power operation failed (ret=%d, status=%d)\n", ret, status_resp);
+		return CMD_RET_FAILURE;
+	}
+
+	printf("SCMI Power Domain %lu successfully updated.\n", domain_id);
+	return CMD_RET_SUCCESS;
+}
+
 static struct cmd_tbl cmd_scmi_sub[] = {
 	U_BOOT_CMD_MKENT(info, CONFIG_SYS_MAXARGS, 1,
 			 do_scmi_info, "", ""),
@@ -415,6 +477,8 @@ static struct cmd_tbl cmd_scmi_sub[] = {
 			 do_scmi_reset, "", ""),
 	U_BOOT_CMD_MKENT(list_domains, CONFIG_SYS_MAXARGS, 1,
 			 do_scmi_list_domains, "", ""),
+	U_BOOT_CMD_MKENT(power, CONFIG_SYS_MAXARGS, 1,
+			 do_scmi_power, "", ""),
 };
 
 /**
