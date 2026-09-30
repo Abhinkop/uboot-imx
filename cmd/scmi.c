@@ -328,6 +328,82 @@ static int do_scmi_reset(struct cmd_tbl *cmdtp, int flag, int argc,
 	return CMD_RET_SUCCESS;
 }
 
+/* SCMI Protocol 0x11 Command IDs */
+#define SCMI_POWER_DOMAIN_ATTRIBUTES_GET 0x3
+#define SCMI_POWER_DOMAIN_STATE_GET 0x5
+#define SCMI_POWER_NAME_LEN_MAX 16
+
+/* Structure matching the official SCMI payload output mapping for attributes */
+struct scmi_power_attr_out {
+	s32 status;
+	u32 flags;
+	char name[SCMI_POWER_NAME_LEN_MAX];
+};
+
+/* Structure matching the official SCMI payload output mapping for state */
+struct scmi_power_status_out {
+	s32 status;
+	u32 power_state; /* 0x0 = OFF, 0x1+ = ON/Active states */
+};
+
+static int do_scmi_list_domains(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+{
+	struct udevice *dev;
+	struct scmi_msg msg;
+	int ret;
+
+	/* 1. Grab the SCMI power domain controller (protocol@11) */
+	ret = uclass_get_device_by_name(UCLASS_POWER_DOMAIN, "protocol@11", &dev);
+	if (ret) {
+		printf("Error: SCMI power domain provider (protocol@11) not found (%d)\n", ret);
+		return CMD_RET_FAILURE;
+	}
+
+	printf("Scanning SCMI server for active Power Domains...\n");
+	printf("-----------------------------------------------------\n");
+	printf(" %-7s | %-16s | %-10s\n", "Hex ID", "Domain Name", "Status");
+	printf("-----------------------------------------------------\n");
+
+	/* Scan standard i.MX95 boundaries */
+	for (u32 id = 0; id < 32; id++) {
+		struct scmi_power_attr_out resp;
+		struct scmi_power_status_out status_resp;
+		u32 domain_id_le = cpu_to_le32(id);
+		const char *state_str = "UNKNOWN";
+
+		/* 2. Format the universal SCMI frame wrapper for Attributes (Name) */
+		msg.protocol_id = 0x11; // Power Domain Protocol
+		msg.message_id = SCMI_POWER_DOMAIN_ATTRIBUTES_GET;
+		msg.in_msg = (u8 *)&domain_id_le;
+		msg.in_msg_sz = sizeof(domain_id_le);
+		msg.out_msg = (u8 *)&resp;
+		msg.out_msg_sz = sizeof(resp);
+
+		/* 3. Execute transmission via the correct U-Boot process engine */
+		ret = devm_scmi_process_msg(dev, &msg);
+		
+		/* If channel breaks or the domain doesn't exist on firmware, stop searching */
+		if (ret != 0 || resp.status != 0)
+			break;
+
+		/* 4. Format and reuse the frame context to query live power state */
+		msg.message_id = SCMI_POWER_DOMAIN_STATE_GET;
+		msg.out_msg = (u8 *)&status_resp;
+		msg.out_msg_sz = sizeof(status_resp);
+
+		ret = devm_scmi_process_msg(dev, &msg);
+		if (ret == 0 && status_resp.status == 0) {
+			state_str = (status_resp.power_state == 0) ? "OFF" : "ON";
+		}
+
+		/* Assure secure print termination */
+		resp.name[SCMI_POWER_NAME_LEN_MAX - 1] = '\0';
+		printf(" 0x%02X	| %-16s | %-10s\n", id, resp.name, state_str);
+	}
+	printf("-----------------------------------------------------\n");
+	return CMD_RET_SUCCESS;
+}
+
 static struct cmd_tbl cmd_scmi_sub[] = {
 	U_BOOT_CMD_MKENT(info, CONFIG_SYS_MAXARGS, 1,
 			 do_scmi_info, "", ""),
@@ -337,6 +413,8 @@ static struct cmd_tbl cmd_scmi_sub[] = {
 			 do_scmi_set_proto, "", ""),
 	U_BOOT_CMD_MKENT(reset, CONFIG_SYS_MAXARGS, 1,
 			 do_scmi_reset, "", ""),
+	U_BOOT_CMD_MKENT(list_domains, CONFIG_SYS_MAXARGS, 1,
+			 do_scmi_list_domains, "", ""),
 };
 
 /**
